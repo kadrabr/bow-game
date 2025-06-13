@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>Bow Game - Yıldızlı Uzay Teması</title>
+<style>
+  /* Body & Arka Plan */
+  body {
+    margin:0;
+    overflow: hidden;
+    height: 100vh;
+    background: radial-gradient(ellipse at center, #0d1b2a 0%, #000000 100%);
+    position: relative;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: white;
+    user-select:none;
+  }
+
+  /* Starfield (yıldızlar) */
+  #starfield {
+    position: fixed;
+    top:0; left:0; width:100vw; height:100vh;
+    pointer-events:none;
+    z-index: 0;
+    overflow: hidden;
+  }
+
+  .star {
+    position: absolute;
+    background: white;
+    border-radius: 50%;
+    opacity: 0.8;
+    animation-name: twinkle;
+    animation-iteration-count: infinite;
+    animation-timing-function: ease-in-out;
+  }
+
+  @keyframes twinkle {
+    0%, 100% {opacity: 0.2;}
+    50% {opacity: 1;}
+  }
+
+  /* Gezegen */
+  #planet {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 40%, #7f8fa6, #2f3640);
+    box-shadow:
+      inset 10px 10px 15px #57606f,
+      0 0 25px 10px rgba(127,143,166,0.3);
+    animation: planetGlow 4s ease-in-out infinite;
+    z-index: 0;
+  }
+
+  @keyframes planetGlow {
+    0%, 100% {box-shadow:
+      inset 10px 10px 15px #57606f,
+      0 0 25px 10px rgba(127,143,166,0.3);}
+    50% {box-shadow:
+      inset 12px 12px 18px #a4b0be,
+      0 0 40px 14px rgba(127,143,166,0.6);}
+  }
+
+  /* Yazı - @Kadrajan */
+  #signature {
+    position: fixed;
+    bottom: 30px; /* gezegenin bottom'u */
+    right: 165px;  /* gezegenin soluna biraz boşluk */
+    height: 120px; /* gezegen yüksekliği kadar */
+    display: flex;
+    align-items: center; /* dikey ortala */
+    color: #0ff; 
+    font-weight: 600;
+    font-size: 22px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    text-shadow: 0 0 8px #0ff, 0 0 20px #0ff;
+    user-select:none;
+    z-index: 10;
+  }
+
+  /* Canvas ve skor */
+  #gameCanvas {
+    position: relative;
+    z-index: 1;
+    background: rgba(0,0,0,0.3);
+    border-radius: 12px;
+    box-shadow: 0 0 20px rgba(0,255,150,0.6);
+    display: block;
+    margin: 40px auto;
+  }
+
+  #score {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    font-size: 28px;
+    font-weight: bold;
+    transition: all 0.3s ease;
+    z-index: 2;
+    text-shadow: 0 0 5px #0f0;
+    user-select:none;
+  }
+
+  #score.animate {
+    color: #0f0;
+    transform: scale(1.3);
+    text-shadow: 0 0 12px #0f0;
+  }
+</style>
+</head>
+<body>
+
+<div id="starfield"></div>
+<div id="planet"></div>
+<div id="signature">@Kadrajan</div>
+
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+<div id="score">Puan: 0</div>
+
+<audio id="shootSound" src="https://actions.google.com/sounds/v1/archery/bow_shoot.ogg"></audio>
+<audio id="hitSound" src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg"></audio>
+
+<script>
+  const starfield = document.getElementById('starfield');
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const scoreDisplay = document.getElementById('score');
+  const shootSound = document.getElementById('shootSound');
+  const hitSound = document.getElementById('hitSound');
+
+  let score = 0;
+
+  // Yıldızlar oluştur
+  function createStar() {
+    const star = document.createElement('div');
+    star.classList.add('star');
+    const size = Math.random() * 2 + 1;
+    star.style.width = size + 'px';
+    star.style.height = size + 'px';
+    star.style.top = Math.random() * window.innerHeight + 'px';
+    star.style.left = Math.random() * window.innerWidth + 'px';
+    star.style.animationDuration = (Math.random() * 3 + 2) + 's';
+    starfield.appendChild(star);
+  }
+
+  for(let i=0; i<120; i++) {
+    createStar();
+  }
+
+  // Yay konumu (sol tarafta)
+  const bowX = 150;
+  const bowY = canvas.height / 2;
+
+  // Hedef (sağ tarafta yukarı-aşağı hareketli)
+  const target = {
+    x: 700,
+    y: canvas.height / 2,
+    radius: 40,
+    dir: 1, // hareket yönü (1: aşağı, -1: yukarı)
+    speed: 2.5
+  };
+
+  // Ok objesi
+  const arrow = {
+    x: bowX,
+    y: bowY,
+    angle: 0,
+    speed: 0,
+    maxSpeed: 25,
+    moving: false,
+    vx: 0,
+    vy: 0,
+    length: 50
+  };
+
+  // Yay germe için fare durumu
+  let isDragging = false;
+  let dragStart = null;
+  let dragCurrent = null;
+
+  // Yay çizimi fonksiyonu
+  function drawBow() {
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = '#8B4513'; // kahverengi yay
+    ctx.beginPath();
+    ctx.arc(bowX, bowY, 60, Math.PI/2, -Math.PI/2, true);
+    ctx.stroke();
+
+    // Yay ipi (gerildiğinde hareket edecek ve rengi değişecek)
+    const pullDist = isDragging && dragCurrent ? Math.min(distance(dragCurrent.x, dragCurrent.y, bowX, bowY), 100) : 0;
+    const pullRatio = pullDist / 100;
+    const colorIntensity = Math.floor(255 * pullRatio);
+    const lineColor = `rgb(${colorIntensity}, ${255 - colorIntensity}, 255)`;
+
+    ctx.lineWidth = 4 + pullRatio * 6; // kalınlık artıyor
+    ctx.strokeStyle = lineColor;
+
+    ctx.beginPath();
+    if(isDragging && dragCurrent) {
+      ctx.moveTo(bowX, bowY - 60);
+      ctx.lineTo(dragCurrent.x, dragCurrent.y);
+      ctx.lineTo(bowX, bowY + 60);
+    } else {
+      ctx.moveTo(bowX, bowY - 60);
+      ctx.lineTo(bowX - 40, bowY);
+      ctx.lineTo(bowX, bowY + 60);
+    }
+    ctx.stroke();
+  }
+
+  // Hedef çizimi
+  function drawTarget() {
+    // dış kırmızı halka
+    ctx.fillStyle = 'red';
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, target.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ortadaki sarı halka
+    ctx.fillStyle = 'yellow';
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, target.radius / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Ok çizimi
+  function drawArrow() {
+    ctx.save();
+    ctx.translate(arrow.x, arrow.y);
+    ctx.rotate(arrow.angle);
+    ctx.fillStyle = 'white';
+
+    // Ok sapı
+    ctx.fillRect(0, -3, arrow.length, 6);
+
+    // Ok ucu (basit üçgen)
+    ctx.beginPath();
+    ctx.moveTo(arrow.length, 0);
+    ctx.lineTo(arrow.length - 10, -6);
+    ctx.lineTo(arrow.length - 10, 6);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // Ok fırlatmaya başla
+  function shootArrow() {
+    if(!isDragging) return;
+
+    const dx = bowX - dragCurrent.x;
+    const dy = bowY - dragCurrent.y;
+    const distancePulled = Math.min(Math.sqrt(dx*dx + dy*dy), 100);
+
+    arrow.angle = Math.atan2(dy, dx);
+    arrow.speed = distancePulled / 4;
+    if(arrow.speed > arrow.maxSpeed) arrow.speed = arrow.maxSpeed;
+
+    arrow.vx = Math.cos(arrow.angle) * arrow.speed;
+    arrow.vy = Math.sin(arrow.angle) * arrow.speed;
+
+    arrow.x = bowX;
+    arrow.y = bowY;
+    arrow.moving = true;
+
+    isDragging = false;
+    dragStart = null;
+    dragCurrent = null;
+
+    shootSound.currentTime = 0;
+    shootSound.play();
+  }
+
+  // Oku hareket ettir
+  function moveArrow() {
+    if(!arrow.moving) return;
+
+    arrow.x += arrow.vx;
+    arrow.y += arrow.vy;
+
+    // Hedefe çarpma kontrolü
+    const dx = arrow.x - target.x;
+    const dy = arrow.y - target.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+
+    if(dist < target.radius) {
+      score++;
+      scoreDisplay.textContent = "Puan: " + score;
+      arrow.moving = false;
+      arrow.x = bowX;
+      arrow.y = bowY;
+
+      hitSound.currentTime = 0;
+      hitSound.play();
+
+      // Puan animasyonu
+      scoreDisplay.classList.add('animate');
+      setTimeout(() => scoreDisplay.classList.remove('animate'), 300);
+    }
+
+    // Canvas dışına çıkarsa oku sıfırla
+    if(arrow.x > canvas.width || arrow.x < 0 || arrow.y > canvas.height || arrow.y < 0) {
+      arrow.moving = false;
+      arrow.x = bowX;
+      arrow.y = bowY;
+    }
+  }
+
+  // Hedefi yukarı-aşağı hareket ettir
+  function moveTarget() {
+    target.y += target.speed * target.dir;
+    if (target.y > canvas.height - target.radius) target.dir = -1;
+    if (target.y < target.radius) target.dir = 1;
+  }
+
+  // Mesafe hesaplama fonksiyonu
+  function distance(x1, y1, x2, y2) {
+    return Math.sqrt((x1 - x2)**2 + (y1 - y2)**2);
+  }
+
+  // Ana oyun döngüsü
+  function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    drawBow();
+    drawTarget();
+    moveTarget();
+    moveArrow();
+    drawArrow();
+
+    // Yay germe ipi için fare noktası çiz
+    if(isDragging && dragCurrent) {
+      ctx.fillStyle = 'cyan';
+      ctx.beginPath();
+      ctx.arc(dragCurrent.x, dragCurrent.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  // Fare olayları
+  canvas.addEventListener('mousedown', e => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    if(mouseX < bowX + 60 && mouseY > bowY - 80 && mouseY < bowY + 80 && !arrow.moving) {
+      isDragging = true;
+      dragStart = {x: mouseX, y: mouseY};
+      dragCurrent = {x: mouseX, y: mouseY};
+    }
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if(isDragging) {
+      const rect = canvas.getBoundingClientRect();
+      dragCurrent = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+    }
+  });
+
+  canvas.addEventListener('mouseup', e => {
+    if(isDragging) {
+      shootArrow();
+    }
+  });
+
+  // Başlangıç pozisyonu oku yayda
+  arrow.x = bowX;
+  arrow.y = bowY;
+
+  gameLoop();
+</script>
+
+</body>
+</html>
+
